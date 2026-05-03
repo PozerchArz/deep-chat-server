@@ -10,6 +10,14 @@ const io = new Server(server, {
 });
 
 app.use(express.json());
+// Отдача статических файлов (HTML, CSS, JS)
+const path = require('path');
+app.use(express.static('public'));
+
+// Главная страница — отдаём index.html
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 let users = [];
 let chats = [];
