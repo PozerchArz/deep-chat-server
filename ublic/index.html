@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Deep Chat v1.0</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Arial', sans-serif; background: #0a0a0a; color: #fff; height: 100vh; display: flex; flex-direction: column; }
+        .screen { display: none; flex-direction: column; height: 100vh; }
+        .screen.active { display: flex; }
+        #header { background: #111; padding: 12px; border-bottom: 2px solid #ff00ff; display: flex; align-items: center; gap: 10px; }
+        #header h1 { color: #00ffff; font-size: 1.2em; flex: 1; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 1.2em; }
+        #chat-list { flex: 1; overflow-y: auto; }
+        .chat-item { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #1a1a1a; gap: 10px; cursor: pointer; }
+        .chat-item:active { background: #1a1a1a; }
+        .chat-info { flex: 1; }
+        .chat-name { font-weight: bold; font-size: 1em; }
+        #chat-box { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .msg { padding: 10px 14px; border-radius: 15px; max-width: 85%; font-size: 0.95em; }
+        .msg-other { background: #1a1a1a; border: 1px solid #ff00ff; align-self: flex-start; }
+        .msg-self { background: #1a1a1a; border: 1px solid #00ffff; align-self: flex-end; }
+        .msg-from { font-size: 0.7em; font-weight: bold; margin-bottom: 4px; }
+        .msg-text { word-break: break-word; }
+        .msg-time { font-size: 0.6em; color: #666; text-align: right; margin-top: 4px; }
+        #input-box { background: #111; padding: 10px; display: flex; gap: 8px; border-top: 2px solid #ff00ff; }
+        #msg-input { flex: 1; padding: 12px; border-radius: 25px; border: 1px solid #00ffff; background: #1a1a1a; color: #fff; font-size: 16px; outline: none; }
+        #send-btn { padding: 12px 20px; border-radius: 25px; border: none; background: #ff00ff; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer; width: auto; }
+        .form-screen { justify-content: center; align-items: center; padding: 20px; }
+        .form-box { background: #111; padding: 25px; border-radius: 20px; border: 1px solid #ff00ff; width: 100%; max-width: 350px; }
+        .form-box h2 { color: #00ffff; text-align: center; margin-bottom: 20px; }
+        .form-box input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #00ffff; background: #1a1a1a; color: #fff; font-size: 16px; margin-bottom: 10px; outline: none; }
+        .form-box button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #ff00ff; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer; }
+        .form-box p { color: #aaa; text-align: center; font-size: 0.8em; margin-top: 15px; }
+        .form-box a { color: #00ffff; cursor: pointer; }
+        #back-btn { background: none; border: none; color: #fff; font-size: 1.5em; cursor: pointer; width: auto; }
+    </style>
+</head>
+<body>
+    <div id="login-screen" class="screen active form-screen">
+        <div class="form-box">
+            <h2>💬 Deep Chat</h2>
+            <input type="text" id="login-nick" placeholder="Ник">
+            <input type="password" id="login-pass" placeholder="Пароль">
+            <button onclick="login()">🔐 Войти</button>
+            <p>Нет аккаунта? <a onclick="showScreen('reg')">Регистрация</a></p>
+        </div>
+    </div>
+    <div id="reg-screen" class="screen form-screen">
+        <div class="form-box">
+            <h2>📝 Регистрация</h2>
+            <input type="text" id="reg-nick" placeholder="Придумай ник">
+            <input type="password" id="reg-pass" placeholder="Пароль">
+            <button onclick="register()">✅ Зарегистрироваться</button>
+            <p>Уже есть? <a onclick="showScreen('login')">Войти</a></p>
+        </div>
+    </div>
+    <div id="main-screen" class="screen">
+        <div id="header"><h1>💎 Deep Chat</h1><span id="online-count" style="color:#ff00ff;font-size:0.8em;">🟢 0</span></div>
+        <div id="chat-list"></div>
+        <div style="background:#111;padding:8px;border-top:1px solid #ff00ff;">
+            <input type="text" id="new-chat-input" placeholder="Ник собеседника..." style="width:100%;padding:12px;border-radius:25px;border:1px solid #00ffff;background:#1a1a1a;color:#fff;font-size:14px;outline:none;">
+            <button onclick="startChat()" style="width:100%;margin-top:5px;padding:10px;border-radius:25px;border:none;background:#ff00ff;color:#fff;font-weight:bold;">➕ Новый чат</button>
+        </div>
+    </div>
+    <div id="chat-screen" class="screen">
+        <div id="header"><button id="back-btn" onclick="closeChat()">◀</button><h1 id="chat-name">Чат</h1></div>
+        <div id="chat-box"></div>
+        <div id="input-box"><input type="text" id="msg-input" placeholder="Сообщение..."><button id="send-btn" onclick="sendMsg()">▶</button></div>
+    </div>
+    <script>
+        const SERVER = '';
+        let socket, myUser, currentChat = null;
+        
+        function showScreen(name) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(name + '-screen').classList.add('active');
+        }
+        
+        async function register() {
+            const nick = document.getElementById('reg-nick').value.trim();
+            const pass = document.getElementById('reg-pass').value.trim();
+            if (!nick || !pass) return alert('Заполни все поля');
+            try {
+                const res = await fetch(SERVER + '/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nickname: nick, password: pass }) });
+                const data = await res.json();
+                if (res.ok) { alert('✅ Зарегистрирован!'); showScreen('login'); }
+                else alert('❌ ' + data.error);
+            } catch(e) { alert('❌ Сервер спит. Подожди 30 сек и попробуй снова.'); }
+        }
+        
+        async function login() {
+            const nick = document.getElementById('login-nick').value.trim();
+            const pass = document.getElementById('login-pass').value.trim();
+            if (!nick || !pass) return alert('Заполни все поля');
+            try {
+                const res = await fetch(SERVER + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nickname: nick, password: pass }) });
+                const data = await res.json();
+                if (res.ok) { myUser = data; connectSocket(); showScreen('main'); loadUsers(); }
+                else alert('❌ ' + data.error);
+            } catch(e) { alert('❌ Сервер спит. Подожди 30 сек и попробуй снова.'); }
+        }
+        
+        function connectSocket() {
+            if (socket) socket.disconnect();
+            socket = io(SERVER, { transports: ['websocket', 'polling'] });
+            socket.on('connect', () => socket.emit('authenticate', myUser.id));
+            socket.on('users:online', c => document.getElementById('online-count').innerText = '🟢 ' + c);
+            socket.on('message:new', data => { if (currentChat === data.chatId) addMessage(data.message); });
+        }
+        
+        async function loadUsers() {
+            try {
+                const res = await fetch(SERVER + '/users');
+                const users = await res.json();
+                const list = document.getElementById('chat-list');
+                list.innerHTML = '';
+                users.filter(u => u.id !== myUser.id).forEach(u => {
+                    const div = document.createElement('div');
+                    div.className = 'chat-item';
+                    div.innerHTML = `<div class="avatar" style="background:${u.avatarColor};width:45px;height:45px;">${u.nickname[0].toUpperCase()}</div><div class="chat-info"><div class="chat-name">${u.nickname} ${u.online?'🟢':''}</div></div>`;
+                    div.onclick = () => openChat(u.id, u.nickname, u.avatarColor);
+                    list.appendChild(div);
+                });
+            } catch(e) {}
+        }
+        
+        function startChat() {
+            fetch(SERVER + '/users').then(r => r.json()).then(users => {
+                const u = users.find(u => u.nickname.toLowerCase() === document.getElementById('new-chat-input').value.trim().toLowerCase());
+                if (u && u.id !== myUser.id) openChat(u.id, u.nickname, u.avatarColor);
+                else alert('Пользователь не найден');
+            });
+        }
+        
+        function openChat(userId, name, color) {
+            currentChat = userId;
+            document.getElementById('chat-name').innerText = name;
+            document.getElementById('chat-box').innerHTML = '';
+            showScreen('chat');
+        }
+        
+        function closeChat() { currentChat = null; showScreen('main'); loadUsers(); }
+        
+        function sendMsg() {
+            const input = document.getElementById('msg-input');
+            const text = input.value.trim();
+            if (!text || !currentChat || !socket?.connected) return;
+            socket.emit('message:send', { chatId: currentChat, text });
+            addMessage({ from: myUser.id, fromNickname: myUser.nickname, fromColor: myUser.avatarColor, text, time: new Date().toISOString() });
+            input.value = '';
+        }
+        
+        function addMessage(msg) {
+            const box = document.getElementById('chat-box');
+            const isSelf = msg.from === myUser.id;
+            const div = document.createElement('div');
+            div.className = 'msg ' + (isSelf ? 'msg-self' : 'msg-other');
+            div.innerHTML = `<div class="msg-from" style="color:${msg.fromColor}">${msg.fromNickname}</div><div class="msg-text">${msg.text}</div><div class="msg-time">${new Date(msg.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>`;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+        
+        document.getElementById('msg-input').addEventListener('keypress', e => { if (e.key==='Enter') sendMsg(); });
+    </script>
+</body>
+</html>
